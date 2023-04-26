@@ -31,6 +31,14 @@ extern "C" {
 #include "lwmqtt/lwmqtt.h"
 }
 
+#ifdef WEBSOCKETS
+#include <WebSocketsClient.h>
+#include <deque>
+using ClientType = WebSocketsClient;
+#else
+using ClientType = Client;
+#endif
+
 typedef uint32_t (*MQTTClientClockSource)();
 
 typedef struct {
@@ -40,7 +48,10 @@ typedef struct {
 } lwmqtt_arduino_timer_t;
 
 typedef struct {
-  Client *client;
+ ClientType *client;
+#ifdef WEBSOCKETS
+  std::deque<uint8_t> buffer;
+#endif
 } lwmqtt_arduino_network_t;
 
 class MQTTClient;
@@ -75,14 +86,18 @@ class MQTTClient {
   uint32_t timeout = 1000;
   bool _sessionPresent = false;
 
-  Client *netClient = nullptr;
+  ClientType *netClient = nullptr;
   const char *hostname = nullptr;
   IPAddress address;
   int port = 0;
   lwmqtt_will_t *will = nullptr;
   MQTTClientCallback callback;
 
+#ifdef WEBSOCKETS
+  lwmqtt_arduino_network_t network = {nullptr, {0}};
+#else
   lwmqtt_arduino_network_t network = {nullptr};
+#endif
   lwmqtt_arduino_timer_t timer1 = {0, 0, nullptr};
   lwmqtt_arduino_timer_t timer2 = {0, 0, nullptr};
   lwmqtt_client_t client = lwmqtt_client_t();
@@ -101,14 +116,14 @@ class MQTTClient {
 
   ~MQTTClient();
 
-  void begin(Client &_client);
-  void begin(const char _hostname[], Client &_client) { this->begin(_hostname, 1883, _client); }
-  void begin(const char _hostname[], int _port, Client &_client) {
+  void begin(ClientType &_client);
+  void begin(const char _hostname[], ClientType &_client) { this->begin(_hostname, 1883, _client); }
+  void begin(const char _hostname[], int _port, ClientType &_client) {
     this->begin(_client);
     this->setHost(_hostname, _port);
   }
-  void begin(IPAddress _address, Client &_client) { this->begin(_address, 1883, _client); }
-  void begin(IPAddress _address, int _port, Client &_client) {
+  void begin(IPAddress _address, ClientType &_client) { this->begin(_address, 1883, _client); }
+  void begin(IPAddress _address, int _port, ClientType &_client) {
     this->begin(_client);
     this->setHost(_address, _port);
   }

@@ -57,7 +57,20 @@ inline lwmqtt_err_t lwmqtt_arduino_network_read(void *ref, uint8_t *buffer, size
   // read until all bytes have been read or timeout has been reached
   while (len > 0 && (millis() - start < timeout)) {
     // read from connection
+#ifdef WEBSOCKETS
+    n->client->loop();
+    // received data are already read to read_buf in onEvent callback
+    int r = 0;
+    if (n->buffer.size() >= len) {
+      for (size_t i = 0; i < len; ++i)
+        buffer[i] = n->buffer[i];
+      for (size_t i = 0; i < len; ++i)
+        n->buffer.pop_front();
+      r = len;
+    }
+#else
     int r = n->client->read(buffer, len);
+#endif
 
     // handle read data
     if (r > 0) {
@@ -72,7 +85,11 @@ inline lwmqtt_err_t lwmqtt_arduino_network_read(void *ref, uint8_t *buffer, size
     delay(1);
 
     // otherwise check status
+#ifdef WEBSOCKETS
+    if (!n->client->isConnected()) {
+#else
     if (!n->client->connected()) {
+#endif
       return LWMQTT_NETWORK_FAILED_READ;
     }
   }
@@ -91,7 +108,12 @@ inline lwmqtt_err_t lwmqtt_arduino_network_write(void *ref, uint8_t *buffer, siz
   auto n = (lwmqtt_arduino_network_t *)ref;
 
   // write bytes
+#ifdef WEBSOCKETS
+  bool b = n->client->sendBIN(buffer, len);
+  *sent = b ? len : 0;
+#else
   *sent = n->client->write(buffer, len);
+#endif
   if (*sent <= 0) {
     return LWMQTT_NETWORK_FAILED_WRITE;
   }
@@ -180,7 +202,7 @@ MQTTClient::~MQTTClient() {
   free(this->writeBuf);
 }
 
-void MQTTClient::begin(Client &_client) {
+void MQTTClient::begin(ClientType &_client) {
   // set client
   this->netClient = &_client;
 
@@ -195,6 +217,30 @@ void MQTTClient::begin(Client &_client) {
 
   // set callback
   lwmqtt_set_callback(&this->client, (void *)&this->callback, MQTTClientHandler);
+#ifdef WEBSOCKETS_H_
+  _client.onEvent([&](WStype_t type, uint8_t *payload, size_t length) {
+    switch (type) {
+      case WStype_DISCONNECTED:
+        break;
+      case WStype_CONNECTED:
+        break;
+      case WStype_TEXT:
+      case WStype_BIN:
+        // copy to temporary buffer
+        for (size_t i = 0; i < length; ++i)
+          this->network.buffer.emplace_back(payload[i]);
+        break;
+      case WStype_ERROR:
+      case WStype_FRAGMENT_TEXT_START:
+      case WStype_FRAGMENT_BIN_START:
+      case WStype_FRAGMENT:
+      case WStype_FRAGMENT_FIN:
+      case WStype_PING:
+      case WStype_PONG:
+      break;
+    }
+  });
+#endif
 }
 
 void MQTTClient::onMessage(MQTTClientCallbackSimple cb) {
@@ -328,6 +374,13 @@ bool MQTTClient::connect(const char clientID[], const char username[], const cha
   // save client
   this->network.client = this->netClient;
 
+#ifdef WEBSOCKETS
+  // Websockets has too many options like SSL to configure here, so just assume we are already connected.
+  if (!this->netClient->isConnected()) {
+    this->_lastError = LWMQTT_NETWORK_FAILED_CONNECT;
+    return false;
+  }
+#else
   // connect to host
   if (!skip) {
     int ret;
@@ -341,6 +394,7 @@ bool MQTTClient::connect(const char clientID[], const char username[], const cha
       return false;
     }
   }
+#endif
 
   // prepare options
   lwmqtt_connect_options_t options = lwmqtt_default_connect_options;
@@ -464,8 +518,14 @@ bool MQTTClient::loop() {
     return false;
   }
 
+#ifdef WEBSOCKETS
+  this->netClient->loop();
+  // data is already received in onEvent callback
+  auto available = this->network.buffer.size();
+#else
   // get available bytes on the network
   auto available = (size_t)this->netClient->available();
+#endif
 
   // yield if data is available
   if (available > 0) {
@@ -493,7 +553,11 @@ bool MQTTClient::loop() {
 bool MQTTClient::connected() {
   // a client is connected if the network is connected, a client is available and
   // the connection has been properly initiated
+#ifdef WEBSOCKETS
+  return this->netClient != nullptr && this->netClient->isConnected() && this->_connected;
+#else
   return this->netClient != nullptr && this->netClient->connected() == 1 && this->_connected;
+#endif
 }
 
 bool MQTTClient::disconnect() {
@@ -516,5 +580,9 @@ void MQTTClient::close() {
   this->_connected = false;
 
   // close network
+#ifdef WEBSOCKETS
+  this->netClient->disconnect();
+#else
   this->netClient->stop();
+#endif
 }
