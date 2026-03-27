@@ -398,6 +398,7 @@ bool MQTTClient::publish(const char topic[], const char payload[], int length, b
   // set duplicate packet id if available
   if (this->nextDupPacketID > 0) {
     options.dup_id = &this->nextDupPacketID;
+    this->nextDupPacketID = 0;
   }
 
   // publish message
@@ -465,7 +466,7 @@ bool MQTTClient::loop() {
   }
 
   // get available bytes on the network
-  auto available = (size_t)this->netClient->available();
+  int available = this->netClient->available();
 
   // yield if data is available
   if (available > 0) {
